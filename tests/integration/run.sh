@@ -185,6 +185,27 @@ else
     echo "note: this btrfs-progs does not support --proto 2, skipping that part"
 fi
 
+#--- protocol 3, which is what carries fs-verity -----------------------------------------------------------------------
+
+#In its own subvolume: a kernel able to enable verity but not to send it can refuse the older protocol versions for
+#a file that has verity on, and that must not disturb the rest of the test.
+btrfs subvolume create "$fs/verity" > /dev/null
+if python3 "$(dirname "$0")/enable-verity.py" "$fs/verity/verity.bin" > /dev/null 2>&1; then
+    btrfs subvolume snapshot -r "$fs/verity" "$fs/verity-snap" > /dev/null
+    if btrfs send --proto 3 "$fs/verity-snap" > "$work/verity-v3.bin" 2>/dev/null; then
+        run_dump --stats "$work/verity-v3.bin"
+        check_contains "$out" 'stream version: 3' "protocol 3 stream is recognised"
+        run_dump "$work/verity-v3.bin"
+        check_contains "$out" 'enable_verity' "the enable_verity command is decoded"
+        run_dump -f json "$work/verity-v3.bin"
+        check_contains "$out" 'enable_verity' "enable_verity shows up in the json document"
+    else
+        echo "note: this kernel cannot send stream version 3, skipping that part"
+    fi
+else
+    echo "note: this kernel cannot enable fs-verity on btrfs, skipping the protocol 3 part"
+fi
+
 #--- bad input is refused with a non-zero exit status ------------------------------------------------------------------
 
 cp "$work/full-v1.bin" "$work/corrupt.bin"

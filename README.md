@@ -1,5 +1,7 @@
 # btrfs-send-parser
 
+[![ci](https://github.com/SnoutFirst/btrfs-send-parser/actions/workflows/ci.yml/badge.svg)](https://github.com/SnoutFirst/btrfs-send-parser/actions/workflows/ci.yml)
+
 A standalone C++17 parser for the Btrfs send stream format. It reads the byte stream that `btrfs send`
 produces and hands you typed operations: `WRITE`, `CLONE`, `UPDATE_EXTENT`, xattrs, inode flags, encoded
 writes, and the rest.
@@ -247,6 +249,11 @@ reports failures by throwing; the parser turns any `std::exception` from `read()
   its raw bytes.
 - **Nothing is buffered beyond one command**, and a corrupt length field cannot force a large allocation:
   `max_command_size` is checked before the payload is read.
+- **Protocol 3 is implemented but rarely seen.** `ENABLE_VERITY` and its attributes are decoded like any other
+  command, and the unit tests drive them from hand-built streams. No kernel here emits them: this machine runs
+  6.12, whose `btrfs send --proto 3` fails with `EPROTO` even though fs-verity itself works on Btrfs and
+  btrfs-progs 6.14 is compiled for stream version 3. The integration test enables verity in a subvolume of its
+  own and checks the version 3 path when the kernel allows it, and says so when it does not.
 
 ## Tests
 
@@ -261,6 +268,9 @@ $ ctest --test-dir build --output-on-failure
 - `integration` (off by default) — `tests/integration/run.sh` needs root and a mountable Btrfs image: it
   creates a filesystem, sends real streams through a pipe into the tool, and checks the good and the bad cases.
   Enable it with `-DBTRFS_SEND_PARSER_BUILD_INTEGRATION_TESTS=ON`.
+
+CI runs all of that on every push: gcc and clang with warnings as errors, an ASan+UBSan build, an
+`install` plus `find_package` consumer, and the integration test as root on a runner with loop devices.
 
 The fixtures under `tests/fixtures` are real streams from `btrfs send`, not hand written. They cover protocol
 1 and 2, full and incremental sends, `--no-data`, `--compressed-data`, clone, fallocate, fileattr,
