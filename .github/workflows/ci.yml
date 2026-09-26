@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc
+            cc: gcc
+            cxx: g++
+            configure: -DBTRFS_SEND_PARSER_WARNINGS_AS_ERRORS=ON -DCMAKE_BUILD_TYPE=Release
+          - name: clang
+            cc: clang
+            cxx: clang++
+            configure: -DBTRFS_SEND_PARSER_WARNINGS_AS_ERRORS=ON -DCMAKE_BUILD_TYPE=Release
+          - name: asan-ubsan
+            cc: gcc
+            cxx: g++
+            configure: -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+      UBSAN_OPTIONS: print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -S . -B build ${{ matrix.configure }}
+      - name: build
+        run: cmake --build build --parallel
+      - name: test
+        run: ctest --test-dir build --output-on-failure
+
+  install:
+    name: install and consume
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build and install
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$PWD/prefix"
+          cmake --build build --parallel
+          cmake --install build
+      - name: find_package smoke test
+        run: |
+          mkdir -p consumer
+          cat > consumer/CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.16)
+          project(consumer LANGUAGES CXX)
+          find_package(btrfs-send-parser CONFIG REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE btrfs::send)
+          EOF
+          cat > consumer/main.cpp <<'EOF'
+          #include <btrfs/send.hpp>
+          #include <iostream>
+          int main()
+          {
+              btrfs::send::SendStream stream;
+              std::cout << stream.operations.size() << "\n";
+              return 0;
+          }
+          EOF
+          cmake -S consumer -B consumer/build -DCMAKE_PREFIX_PATH="$PWD/prefix"
+          cmake --build consumer/build --parallel
+          ./consumer/build/consumer
+
+  integration:
+    name: integration (real btrfs, root)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: install btrfs-progs
+        run: sudo apt-get update && sudo apt-get install -y btrfs-progs attr
+      - name: configure and build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBTRFS_SEND_PARSER_BUILD_INTEGRATION_TESTS=ON
+          cmake --build build --parallel
+      - name: run the integration test
+        run: sudo --preserve-env=PATH tests/integration/run.sh "$PWD/build/btrfs-send-dump"
