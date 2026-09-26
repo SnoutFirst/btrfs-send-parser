@@ -196,3 +196,26 @@ generating them.
 A path is a byte string with no encoding requirement: the fixtures contain names with a tab, a newline, a
 quote, a backslash, a raw `0xff` byte and multi byte UTF-8. The parser keeps them as `std::string` and never
 interprets them. `btrfs-send-dump` escapes them for display.
+
+## Where the tables come from
+
+The command ids (`1`…`26`), the attribute ids (`1`…`35`), the stream version each command first appears in and
+the attributes each command carries were taken from the published format description and then checked against
+the sources of btrfs-progs 6.14 (`kernel-shared/send.h` for the id lists and the version split, and the
+receiver's reads in `common/send-stream.c` for which attributes each command carries and how wide they are).
+Every id and every per command attribute set matched; the only differences found were in the other direction,
+places where the receiver reads less than the format defines:
+
+- `UTIMES` — the receiver reads `ATIME`, `MTIME` and `CTIME`; `OTIME` (version 2 and later) is documented and
+  therefore decoded, but not read by its receiver.
+- `ENABLE_VERITY` — the receiver reads a 1 byte `VERITY_ALGORITHM` and a 4 byte `VERITY_BLOCK_SIZE`, with the
+  salt and signature as raw byte strings, which is what the typed operation holds.
+- `SUBVOL` and `SNAPSHOT` — older descriptions mark `PATH` optional, for a send of the top-level subvolume.
+  The receiver reads it unconditionally, and no kernel here can produce a stream without it: `btrfs send` of a
+  mounted subvolume root fails with `ENOENT` from the send ioctl (`-2`), and going through `btrfs property set
+  -ts <path> ro true` first only gets as far as that same error. This parser requires `PATH` on both commands,
+  matching the receiver.
+
+No implementation code was taken from btrfs-progs, which is GPL: what crossed over are the protocol constants
+and the shape of the stream, both published facts, and this parser is organised around the stream rather than
+around that receiver.
